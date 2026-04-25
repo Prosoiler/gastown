@@ -156,6 +156,13 @@ func runPatrolScan(cmd *cobra.Command, args []string) error {
 	stallResult := witness.DetectStalledPolecats(workDir, rigName)
 	completionResult := witness.DiscoverCompletions(bd, workDir, rigName, router)
 
+	// HARNESS-13 Layer B: re-validate recently-closed beads (~5min lookback).
+	// Reopens any close that bypassed the gt close wrapper with a content-less
+	// reason. Best-effort — errors are logged but do not abort the patrol.
+	if fcRes := witness.DetectFalseCloses(bd, workDir, witness.DefaultFalseCloseLookback); fcRes != nil && fcRes.Reopened > 0 {
+		fmt.Fprintf(os.Stderr, "harness-13: reopened %d FALSE-CLOSE bead(s) in rig %s\n", fcRes.Reopened, rigName)
+	}
+
 	// Build patrol receipts for zombies
 	receipts := witness.BuildPatrolReceipts(rigName, zombieResult)
 

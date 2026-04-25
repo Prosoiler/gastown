@@ -23,19 +23,20 @@ var closeCmd = &cobra.Command{
 	Long: `Close one or more beads (wrapper for 'bd close').
 
 This is a convenience command that passes through to 'bd close' with
-all arguments and flags preserved.
+all arguments and flags preserved. HARNESS-13 validation gate runs
+first and rejects FALSE-CLOSE patterns (bare reasons, polecat closes
+with zero commits) before bd is invoked.
 
 When an issue is closed, any convoys tracking it are checked for
 completion. If all tracked issues in a convoy are closed, the convoy
 is auto-closed.
 
 Examples:
-  gt close gt-abc              # Close bead gt-abc
-  gt close gt-abc gt-def       # Close multiple beads
-  gt close --reason "Done"     # Close with reason
-  gt close --comment "Done"    # Same as --reason (alias)
-  gt close --force             # Force close pinned beads
-  gt close gt-abc --cascade    # Close gt-abc and all its children`,
+  gt close gt-abc --reason "added idempotency to webhook (TestX)"
+  gt close gt-abc gt-def --reason "..."
+  gt close --comment "Done"     # alias for --reason
+  gt close gt-abc --cascade     # close gt-abc and all its children
+  gt close gt-abc --skip-gate --reason "hotfix: outage triage SEV-1"`,
 	DisableFlagParsing: true, // Pass all flags through to bd close
 	RunE:               runClose,
 }
@@ -64,6 +65,15 @@ func runClose(cmd *cobra.Command, args []string) error {
 			convertedArgs[i] = arg
 		}
 	}
+
+	// HARNESS-13 validation gate: Rules 1 (reason), 2 (polecat commits),
+	// 3 (skip path). Runs before bd close — reject before any DB write.
+	// --skip-gate is a gt-only flag and is stripped before bd delegation.
+	if exitCode, err := runCloseGate(extractGateInputs(convertedArgs)); err != nil {
+		os.Exit(exitCode)
+		return err
+	}
+	convertedArgs = stripSkipGateFlag(convertedArgs)
 
 	// If cascade, close children first (depth-first)
 	if cascade {
