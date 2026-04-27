@@ -206,6 +206,8 @@ func runPrime(cmd *cobra.Command, args []string) (retErr error) {
 	outputCheckpointContext(ctx)
 	runPrimeExternalTools(cwd)
 
+	checkAgentWIP(ctx)
+
 	if ctx.Role == RoleMayor {
 		checkPendingEscalations(ctx)
 	}
@@ -1207,6 +1209,55 @@ func setTmuxWorkContext(workRig, workBead, workMol string) {
 	setOrUnset("GT_WORK_RIG", workRig)
 	setOrUnset("GT_WORK_BEAD", workBead)
 	setOrUnset("GT_WORK_MOL", workMol)
+}
+
+// checkAgentWIP queries for open beads assigned to the current agent and surfaces
+// them as a session-start WIP listing. This implements the M4 ka-as7 re-base
+// acceptance criterion: agents see their open assignments alongside their hook
+// at every prime, so abandoned/forgotten work is visible without manual querying.
+func checkAgentWIP(ctx RoleContext) {
+	if primeDryRun {
+		explain(true, "agent WIP check: skipped in dry-run mode")
+		return
+	}
+	assignee := getAgentIdentity(ctx)
+	if assignee == "" {
+		return
+	}
+
+	cmd := exec.Command("bd", "list", "--assignee", assignee, "--status=open", "--json")
+	cmd.Dir = ctx.WorkDir
+	cmd.Env = os.Environ()
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		if errMsg := strings.TrimSpace(stderr.String()); errMsg != "" {
+			fmt.Fprintf(os.Stderr, "bd list --assignee=%s: %s\n", assignee, errMsg)
+		}
+		return
+	}
+
+	var wip []struct {
+		ID       string `json:"id"`
+		Title    string `json:"title"`
+		Priority int    `json:"priority"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &wip); err != nil || len(wip) == 0 {
+		return
+	}
+
+	fmt.Println()
+	fmt.Printf("%s\n\n", style.Bold.Render("## 📋 Your Open WIP"))
+	fmt.Printf("%d open issue(s) assigned to **%s** (`bd list --assignee %s --status=open`):\n\n",
+		len(wip), assignee, assignee)
+
+	for _, w := range wip {
+		fmt.Printf("  • [P%d] %s (%s)\n", w.Priority, w.Title, w.ID)
+	}
+	fmt.Println()
 }
 
 // checkPendingEscalations queries for open escalation beads and displays them prominently.
